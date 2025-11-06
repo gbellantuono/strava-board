@@ -1,0 +1,113 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { hms, stravaFetch } from '../../../lib';
+import type { StravaActivity } from '../../../lib';
+import { supabase } from '../../../lib/supabase';
+import { ensureAccessToken, type AthleteRow } from '../../../lib/stravaAuth';
+
+type AthleteAgg = {
+  name: string;
+  runs: number;
+  totalDistM: number;
+  maxDistM: number;
+  totalTimeS: number;
+};
+
+function parseDateToEpoch(input: string | null): number | null {
+  if (!input) return null;
+  let d: Date | null = null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    d = new Date(`${input}T00:00:00Z`);
+  } else if (/^\d{2}-\d{2}-\d{4}$/.test(input)) {
+    const [dd, mm, yyyy] = input.split('-').map(Number);
+    d = new Date(Date.UTC(yyyy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+  }
+  if (!d || isNaN(d.getTime())) return null;
+  return Math.floor(d.getTime() / 1000);
+}
+
+export async function GET(_req: NextRequest) {
+  const url = new URL(_req.url);
+  const afterEpoch = parseDateToEpoch(url.searchParams.get('after'));
+  const beforeEpoch = parseDateToEpoch(url.searchParams.get('before'));
+  // Fetch list of authorized athletes from Supabase
+  const { data: athletes, error } = await supabase
+    .from('athletes')
+    .select(
+      'athlete_id, firstname, lastname, access_token, refresh_token, expires_at'
+    );
+  if (error) {
+    return NextResponse.json(
+      { error: 'Failed to load athletes', detail: error.message },
+      { status: 500 }
+    );
+  }
+  if (!athletes || athletes.length === 0) {
+    return NextResponse.json([]);
+  }
+
+  // Aggregate across all athletes by fetching their personal activities
+  const byAthlete = new Map<number, AthleteAgg>();
+  for (const row of athletes as AthleteRow[]) {
+    const name =
+      `${row.firstname ?? ''} ${row.lastname ?? ''}`.trim() ||
+      `Athlete ${row.athlete_id}`;
+    const access = await ensureAccessToken(row);
+    if (!access) continue;
+    let acts: StravaActivity[] = [];
+    try {
+      const params: string[] = ['per_page=50'];
+      if (afterEpoch) params.push(`after=${afterEpoch}`);
+      if (beforeEpoch) params.push(`before=${beforeEpoch}`);
+      acts = await stravaFetch<StravaActivity[]>(
+        `/athlete/activities?${params.join('&')}`,
+        access
+      );
+    } catch {
+      continue;
+    }
+    const runs = acts.filter((a) => {
+      const kind = (a.sport_type ?? a.type ?? '').toLowerCase();
+      const ts = a.start_date ? Date.parse(a.start_date) : NaN;
+      const inRange =
+        (!afterEpoch || (!isNaN(ts) && ts >= afterEpoch * 1000)) &&
+        (!beforeEpoch || (!isNaN(ts) && ts < beforeEpoch * 1000));
+      return kind.includes('run') && inRange;
+    });
+    const current = byAthlete.get(row.athlete_id) ?? {
+      name,
+      runs: 0,
+      totalDistM: 0,
+      maxDistM: 0,
+      totalTimeS: 0,
+    };
+    for (const a of runs) {
+      current.runs += 1;
+      current.totalDistM += a.distance || 0;
+      current.maxDistM = Math.max(current.maxDistM, a.distance || 0);
+      current.totalTimeS += a.moving_time || 0;
+    }
+    byAthlete.set(row.athlete_id, current);
+  }
+
+  const toMin = (s: number) => s / 60;
+  const toKm = (m: number) => m / 1000;
+  const rows = Array.from(byAthlete.entries()).map(([athlete_id, agg]) => {
+    const total_km = toKm(agg.totalDistM);
+    const avg_run_time_mins =
+      agg.runs > 0 ? toMin(agg.totalTimeS) / agg.runs : 0;
+    const avg_pace_min_per_km =
+      total_km > 0 ? toMin(agg.totalTimeS) / total_km : 0;
+    return {
+      athlete_id,
+      athlete_name: agg.name,
+      total_runs: agg.runs,
+      total_distance_km: Number(total_km.toFixed(2)),
+      max_distance_km: Number(toKm(agg.maxDistM).toFixed(2)),
+      total_run_time_hms: hms(agg.totalTimeS),
+      average_run_time_mins: Number(avg_run_time_mins.toFixed(2)),
+      average_pace_min_per_km: Number(avg_pace_min_per_km.toFixed(2)),
+    };
+  });
+
+  return NextResponse.json(rows);
+}
