@@ -51,13 +51,12 @@ export default function RootLayout({
               >
                 {/* If you add /public/strava-logo.png or .svg, it will render here */}
                 <img
-                  src="/strava-logo.png"
+                  src="/strava-logo.svg"
                   alt="Strava"
                   width={80}
                   height={16}
                   style={{ display: 'inline-block', verticalAlign: 'middle' }}
                 />
-                <span>Strava</span>
               </a>
               .
             </span>
