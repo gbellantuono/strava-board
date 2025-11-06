@@ -1,7 +1,7 @@
 import LeaderboardTable, { AthleteStats } from '@/components/LeaderboardTable';
 import LoginButton from '@/components/LoginButton';
 import LogoutButton from '@/components/LogoutButton';
-import { headers } from 'next/headers';
+import { headers, cookies } from 'next/headers';
 
 async function getLeaderboard(): Promise<{
   ok: boolean;
@@ -40,6 +40,8 @@ async function getBaseUrl(): Promise<string> {
 }
 export default async function Page() {
   const result = await getLeaderboard();
+  const cks = await cookies();
+  const isLoggedIn = !!cks.get('strava_access_token');
 
   return (
     <main>
@@ -48,7 +50,7 @@ export default async function Page() {
         Login with Strava to fetch your club activities and see the leaderboard.
       </p>
 
-      {!result.ok ? (
+      {!isLoggedIn ? (
         <LoginButton />
       ) : (
         <>

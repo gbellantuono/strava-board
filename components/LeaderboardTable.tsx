@@ -5,14 +5,16 @@ import { useMemo, useState } from 'react';
 export type AthleteStats = {
   athlete_id: number;
   athlete_name: string;
+  position: number;
+  medal: 'gold' | 'silver' | 'bronze' | null;
   total_runs: number;
   total_distance_km: number;
   max_distance_km: number;
   total_run_time_hms: string;
   average_run_time_mins: number;
   average_pace_min_per_km: number;
-  first_activity_date?: string;
-  last_activity_date?: string;
+  best_pace_min_per_km: number;
+  last_run: string | null; // ISO
 };
 
 type Props = { data: AthleteStats[] };
@@ -20,8 +22,8 @@ type Props = { data: AthleteStats[] };
 type SortKey = keyof AthleteStats;
 
 export default function LeaderboardTable({ data }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>('total_distance_km');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sortKey, setSortKey] = useState<SortKey>('position');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const sorted = useMemo(() => {
     const copy = [...data];
@@ -58,6 +60,7 @@ export default function LeaderboardTable({ data }: Props) {
       <table>
         <thead>
           <tr>
+            <Header label="Pos" keyName="position" />
             <Header label="Athlete" keyName="athlete_name" />
             <Header label="Runs" keyName="total_runs" />
             <Header label="Total km" keyName="total_distance_km" />
@@ -68,13 +71,22 @@ export default function LeaderboardTable({ data }: Props) {
               label="Avg pace (min/km)"
               keyName="average_pace_min_per_km"
             />
-            <th>First run</th>
-            <th>Last run</th>
+            <Header label="Best pace (min/km)" keyName="best_pace_min_per_km" />
+            <Header label="Last run" keyName="last_run" />
           </tr>
         </thead>
         <tbody>
           {sorted.map((row: AthleteStats) => (
             <tr key={row.athlete_id}>
+              <td>
+                {row.position <= 3
+                  ? row.position === 1
+                    ? '🥇'
+                    : row.position === 2
+                    ? '🥈'
+                    : '🥉'
+                  : row.position}
+              </td>
               <td>{row.athlete_name}</td>
               <td>{row.total_runs}</td>
               <td>{row.total_distance_km.toFixed(2)}</td>
@@ -82,14 +94,10 @@ export default function LeaderboardTable({ data }: Props) {
               <td>{row.total_run_time_hms}</td>
               <td>{row.average_run_time_mins.toFixed(1)}</td>
               <td>{row.average_pace_min_per_km.toFixed(2)}</td>
+              <td>{row.best_pace_min_per_km.toFixed(2)}</td>
               <td>
-                {row.first_activity_date
-                  ? row.first_activity_date.slice(0, 10)
-                  : '-'}
-              </td>
-              <td>
-                {row.last_activity_date
-                  ? row.last_activity_date.slice(0, 10)
+                {row.last_run
+                  ? new Date(row.last_run).toISOString().slice(0, 10) // YYYY-MM-DD (stable, UTC)
                   : '-'}
               </td>
             </tr>

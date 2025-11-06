@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const CLIENT_ID = process.env.STRAVA_CLIENT_ID!;
 const CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET!;
 const REDIRECT_URI = process.env.STRAVA_REDIRECT_URI!;
+const CLUB_ID = process.env.STRAVA_CLUB_ID;
 
 type TokenResponse = {
   access_token: string;
@@ -56,6 +57,40 @@ export async function GET(req: NextRequest) {
   }
 
   const json = (await res.json()) as TokenResponse;
+
+  // Optional: enforce club membership before setting cookie or storing tokens
+  if (CLUB_ID) {
+    try {
+      const clubsRes = await fetch(
+        'https://www.strava.com/api/v3/athlete/clubs',
+        {
+          headers: { Authorization: `Bearer ${json.access_token}` },
+          cache: 'no-store',
+        }
+      );
+      if (clubsRes.ok) {
+        const clubs = (await clubsRes.json()) as Array<{ id: number }>; // minimal shape
+        const requiredId = Number(CLUB_ID);
+        const isMember = clubs.some(
+          (c) => c && typeof c.id === 'number' && c.id === requiredId
+        );
+        if (!isMember) {
+          // Optionally deauthorize token here (not required). Redirect with error.
+          const redirect = NextResponse.redirect(
+            new URL('/?error=not_in_club', req.url)
+          );
+          // Do not set cookie or store tokens
+          return redirect;
+        }
+      }
+    } catch {
+      // If membership check fails unexpectedly, fall back to denying login for safety
+      const redirect = NextResponse.redirect(
+        new URL('/?error=club_check_failed', req.url)
+      );
+      return redirect;
+    }
+  }
 
   // Persist or update athlete tokens in Supabase
   try {
