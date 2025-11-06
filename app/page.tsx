@@ -46,13 +46,15 @@ export default async function Page() {
   return (
     <main>
       <h1 style={{ margin: '0 0 1rem 0' }}>🏃‍♂️ VEC Running Leaderboard</h1>
-      <p style={{ color: '#9aa3b2', marginBottom: '1.5rem' }}>
-        Connect with Strava to fetch your club activities and see the
-        leaderboard.
-      </p>
 
       {!isLoggedIn ? (
-        <LoginButton />
+        <>
+          <p style={{ color: '#9aa3b2', marginBottom: '1.5rem' }}>
+            Connect with Strava to fetch your club activities and see the
+            leaderboard.
+          </p>
+          <LoginButton />
+        </>
       ) : (
         <>
           <div
