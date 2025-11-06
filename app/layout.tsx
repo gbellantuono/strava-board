@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'VEC Strava Leaderboard',
-  description: 'Leaderboard for VEC Strava club built with Next.js',
+  title: 'VEC Running Leaderboard',
+  description: 'Leaderboard for VEC running club members using Strava data',
 };
 
 export default function RootLayout({
