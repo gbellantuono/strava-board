@@ -7,6 +7,7 @@ export type AthleteRow = {
   athlete_id: number;
   firstname?: string | null;
   lastname?: string | null;
+  profile?: string | null;
   access_token?: string | null;
   refresh_token?: string | null;
   expires_at?: string | null; // ISO string or null

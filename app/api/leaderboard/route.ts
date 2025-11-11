@@ -3,6 +3,10 @@ import { hms, stravaFetch } from '../../../lib';
 import type { StravaActivity } from '../../../lib';
 import { supabase } from '../../../lib/supabase';
 import { ensureAccessToken, type AthleteRow } from '../../../lib/stravaAuth';
+import {
+  projectRunsActiveDays,
+  projectRunsActiveWeeks,
+} from '../../../lib/projection';
 
 type AthleteAgg = {
   name: string;
@@ -12,6 +16,10 @@ type AthleteAgg = {
   totalTimeS: number;
   bestPaceMinPerKm: number; // lower is better; Infinity if none
   lastRunAtMs: number; // timestamp ms of most recent run
+  firstRunAtMs: number; // timestamp ms of earliest run in range
+  activeDays: number; // number of distinct calendar days with at least one run
+  activeWeeks: number; // number of distinct calendar weeks with at least one run
+  longestGapDays?: number; // longest inactivity gap in days between active days
 };
 
 function parseDateToEpoch(input: string | null): number | null {
@@ -25,6 +33,14 @@ function parseDateToEpoch(input: string | null): number | null {
   }
   if (!d || isNaN(d.getTime())) return null;
   return Math.floor(d.getTime() / 1000);
+}
+
+function parseTargetToEpoch(input: string | null): number {
+  const fallback = Math.floor(Date.parse('2025-12-11T14:00:00Z') / 1000); // default target
+  if (!input) return fallback;
+  const d = new Date(input);
+  const t = d.getTime();
+  return isNaN(t) ? fallback : Math.floor(t / 1000);
 }
 
 const CLUB_ID = process.env.STRAVA_CLUB_ID;
@@ -67,11 +83,19 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const afterEpoch = parseDateToEpoch(url.searchParams.get('after'));
   const beforeEpoch = parseDateToEpoch(url.searchParams.get('before'));
+  const targetEpoch = parseTargetToEpoch(url.searchParams.get('target'));
+  // Enforce challenge start date (defaults to 2025-10-26 if not provided)
+  const startDateStr = process.env.NEXT_PUBLIC_START_DATE || '2025-10-26';
+  const campaignStartEpoch = parseDateToEpoch(startDateStr);
+  const effectiveAfterEpoch =
+    afterEpoch && campaignStartEpoch
+      ? Math.max(afterEpoch, campaignStartEpoch)
+      : afterEpoch ?? campaignStartEpoch;
   // Fetch list of authorized athletes from Supabase
   const { data: athletes, error } = await supabase
     .from('athletes')
     .select(
-      'athlete_id, firstname, lastname, access_token, refresh_token, expires_at'
+      'athlete_id, firstname, lastname, profile, access_token, refresh_token, expires_at'
     );
   if (error) {
     return NextResponse.json(
@@ -94,7 +118,7 @@ export async function GET(req: NextRequest) {
     let acts: StravaActivity[] = [];
     try {
       const params: string[] = ['per_page=50'];
-      if (afterEpoch) params.push(`after=${afterEpoch}`);
+      if (effectiveAfterEpoch) params.push(`after=${effectiveAfterEpoch}`);
       if (beforeEpoch) params.push(`before=${beforeEpoch}`);
       acts = await stravaFetch<StravaActivity[]>(
         `/athlete/activities?${params.join('&')}`,
@@ -107,7 +131,8 @@ export async function GET(req: NextRequest) {
       const kind = (a.sport_type ?? a.type ?? '').toLowerCase();
       const ts = a.start_date ? Date.parse(a.start_date) : NaN;
       const inRange =
-        (!afterEpoch || (!isNaN(ts) && ts >= afterEpoch * 1000)) &&
+        (!effectiveAfterEpoch ||
+          (!isNaN(ts) && ts >= effectiveAfterEpoch * 1000)) &&
         (!beforeEpoch || (!isNaN(ts) && ts < beforeEpoch * 1000));
       return kind.includes('run') && inRange;
     });
@@ -119,7 +144,14 @@ export async function GET(req: NextRequest) {
       totalTimeS: 0,
       bestPaceMinPerKm: Number.POSITIVE_INFINITY,
       lastRunAtMs: 0,
+      firstRunAtMs: Number.POSITIVE_INFINITY,
+      activeDays: 0,
+      activeWeeks: 0,
     };
+    // Track unique active days (UTC date) for active-days projection
+    const daySet = new Set<string>();
+    // Track unique active weeks by Monday (UTC) date string
+    const weekSet = new Set<string>();
     for (const a of runs) {
       current.runs += 1;
       current.totalDistM += a.distance || 0;
@@ -132,13 +164,51 @@ export async function GET(req: NextRequest) {
         if (pace < current.bestPaceMinPerKm) current.bestPaceMinPerKm = pace;
       }
       const ts = a.start_date ? Date.parse(a.start_date) : NaN;
-      if (!isNaN(ts) && ts > current.lastRunAtMs) current.lastRunAtMs = ts;
+      if (!isNaN(ts)) {
+        if (ts > current.lastRunAtMs) current.lastRunAtMs = ts;
+        if (ts < current.firstRunAtMs) current.firstRunAtMs = ts;
+        // Use UTC calendar date to count active days
+        const d = new Date(ts);
+        const iso = new Date(
+          Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+        )
+          .toISOString()
+          .slice(0, 10);
+        daySet.add(iso);
+        // Compute Monday (UTC) of this week to count active weeks
+        const dow = d.getUTCDay(); // 0=Sun..6=Sat
+        const daysSinceMon = (dow + 6) % 7; // 0 if Monday
+        const mondayMs =
+          Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) -
+          daysSinceMon * 86400000;
+        const mondayIso = new Date(mondayMs).toISOString().slice(0, 10);
+        weekSet.add(mondayIso);
+      }
+    }
+    current.activeDays = daySet.size;
+    current.activeWeeks = weekSet.size;
+    // Compute longest inactivity gap (in days) between sorted active days
+    if (daySet.size > 0) {
+      const dayEpochs = Array.from(daySet)
+        .map((iso) => Date.parse(`${iso}T00:00:00Z`))
+        .filter((n) => !isNaN(n))
+        .sort((a, b) => a - b);
+      let longestGapDays = 0;
+      for (let i = 1; i < dayEpochs.length; i++) {
+        const gapDays =
+          Math.floor((dayEpochs[i] - dayEpochs[i - 1]) / 86400000) - 1; // days strictly between
+        if (gapDays > longestGapDays) longestGapDays = gapDays;
+      }
+      current.longestGapDays = Math.max(0, longestGapDays);
+    } else {
+      current.longestGapDays = undefined;
     }
     byAthlete.set(row.athlete_id, current);
   }
 
   const toMin = (s: number) => s / 60;
   const toKm = (m: number) => m / 1000;
+  const nowEpoch = Math.floor(Date.now() / 1000);
   const rows = Array.from(byAthlete.entries()).map(([athlete_id, agg]) => {
     const total_km = toKm(agg.totalDistM);
     const avg_run_time_mins =
@@ -152,9 +222,29 @@ export async function GET(req: NextRequest) {
     const last_run = agg.lastRunAtMs
       ? new Date(agg.lastRunAtMs).toISOString()
       : null;
+    // Projection: weekly consistency model
+    // Assumption: one or more runs per active week. Estimate total active weeks from start to target
+    // using observed active-week rate (active weeks / weeks elapsed), then multiply by runs/active-week.
+    const startEpoch =
+      effectiveAfterEpoch ??
+      (isFinite(agg.firstRunAtMs) && agg.firstRunAtMs > 0
+        ? Math.floor(agg.firstRunAtMs / 1000)
+        : null);
+    const projected_runs = projectRunsActiveWeeks({
+      runs: agg.runs,
+      activeWeeks: agg.activeWeeks,
+      firstRunAtMs: agg.firstRunAtMs,
+      afterEpoch: effectiveAfterEpoch ?? null,
+      targetEpoch,
+      nowEpoch,
+    });
+    const profile = (athletes as AthleteRow[]).find(
+      (a) => a.athlete_id === athlete_id
+    )?.profile; // quick lookup (dataset is small)
     return {
       athlete_id,
       athlete_name: agg.name,
+      profile: profile ?? null,
       total_runs: agg.runs,
       total_distance_km: Number(total_km.toFixed(2)),
       max_distance_km: Number(toKm(agg.maxDistM).toFixed(2)),
@@ -163,6 +253,7 @@ export async function GET(req: NextRequest) {
       average_pace_min_per_km: Number(avg_pace_min_per_km.toFixed(2)),
       best_pace_min_per_km,
       last_run,
+      projected_runs,
     };
   });
 

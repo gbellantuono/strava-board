@@ -60,6 +60,16 @@ export async function GET(req: NextRequest) {
 
   // Optional: enforce club membership before setting cookie or storing tokens
   if (CLUB_ID) {
+    // Validate configured club id
+    const trimmed = String(CLUB_ID).trim();
+    const requiredId = Number(trimmed);
+    if (Number.isNaN(requiredId)) {
+      // Misconfigured CLUB_ID - deny login for safety
+      // eslint-disable-next-line no-console
+      console.warn('STRAVA_CLUB_ID is not a valid number:', CLUB_ID);
+      return NextResponse.redirect(new URL('/?error=invalid_club_id', req.url));
+    }
+
     try {
       const clubsRes = await fetch(
         'https://www.strava.com/api/v3/athlete/clubs',
@@ -68,27 +78,53 @@ export async function GET(req: NextRequest) {
           cache: 'no-store',
         }
       );
-      if (clubsRes.ok) {
-        const clubs = (await clubsRes.json()) as Array<{ id: number }>; // minimal shape
-        const requiredId = Number(CLUB_ID);
-        const isMember = clubs.some(
-          (c) => c && typeof c.id === 'number' && c.id === requiredId
+
+      // If Strava returns a non-OK response, treat it as a failed membership check
+      const raw = await clubsRes.text();
+      if (!clubsRes.ok) {
+        // eslint-disable-next-line no-console
+        console.warn('athlete/clubs returned non-OK', clubsRes.status, raw);
+        return NextResponse.redirect(
+          new URL('/?error=club_check_failed', req.url)
         );
-        if (!isMember) {
-          // Optionally deauthorize token here (not required). Redirect with error.
-          const redirect = NextResponse.redirect(
-            new URL('/?error=not_in_club', req.url)
-          );
-          // Do not set cookie or store tokens
-          return redirect;
-        }
       }
-    } catch {
+
+      let clubs: Array<{ id?: number | string }> | null = null;
+      try {
+        clubs = JSON.parse(raw) as Array<{ id?: number | string }>;
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('Failed to parse clubs response:', e, raw);
+        return NextResponse.redirect(
+          new URL('/?error=club_check_failed', req.url)
+        );
+      }
+
+      if (!Array.isArray(clubs)) {
+        // eslint-disable-next-line no-console
+        console.warn('clubs response is not an array:', raw);
+        return NextResponse.redirect(
+          new URL('/?error=club_check_failed', req.url)
+        );
+      }
+
+      const isMember = clubs.some((c) => {
+        if (c == null) return false;
+        const cid = Number(c.id);
+        return !Number.isNaN(cid) && cid === requiredId;
+      });
+
+      if (!isMember) {
+        // Optionally deauthorize token here (not required). Redirect with error.
+        return NextResponse.redirect(new URL('/?error=not_in_club', req.url));
+      }
+    } catch (err) {
       // If membership check fails unexpectedly, fall back to denying login for safety
-      const redirect = NextResponse.redirect(
+      // eslint-disable-next-line no-console
+      console.error('Club membership check failed:', err);
+      return NextResponse.redirect(
         new URL('/?error=club_check_failed', req.url)
       );
-      return redirect;
     }
   }
 

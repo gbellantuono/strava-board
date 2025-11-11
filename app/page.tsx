@@ -1,4 +1,5 @@
 import LeaderboardTable, { AthleteStats } from '@/components/LeaderboardTable';
+import Countdown from '@/components/Countdown';
 import LoginButton from '@/components/LoginButton';
 import LogoutButton from '@/components/LogoutButton';
 import { headers, cookies } from 'next/headers';
@@ -38,17 +39,54 @@ async function getBaseUrl(): Promise<string> {
   const protocol = isProd ? 'https' : 'http';
   return `${protocol}://${host}`;
 }
-export default async function Page() {
-  const result = await getLeaderboard();
+export default async function Page({
+  searchParams,
+}: {
+  searchParams?: Record<string, string | string[]>;
+}) {
   const cks = await cookies();
   const isLoggedIn = !!cks.get('strava_access_token');
+  const errorParam =
+    typeof searchParams?.error === 'string' ? searchParams?.error : undefined;
+  // Only fetch leaderboard when logged in and no error redirect present
+  const result =
+    isLoggedIn && !errorParam ? await getLeaderboard() : { ok: false };
 
   return (
     <main>
-      <h1 style={{ margin: '0 0 1rem 0' }}>🏃‍♂️ VEC Running Leaderboard</h1>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          margin: '0 0 1rem 0',
+          flexWrap: 'wrap',
+        }}
+      >
+        <h1 style={{ margin: 0 }}>🏃‍♂️ VEC Running Leaderboard</h1>
+        <Countdown />
+      </div>
 
       {!isLoggedIn ? (
         <>
+          {errorParam ? (
+            <div
+              className="card"
+              style={{
+                marginBottom: '1rem',
+                border: '1px solid #b91c1c',
+                background: '#7f1d1d',
+                color: '#fee2e2',
+              }}
+            >
+              {errorParam === 'not_in_club'
+                ? 'Your Strava account is not a member of the required club.'
+                : errorParam === 'invalid_club_id'
+                ? 'The club is misconfigured. Please contact the admin.'
+                : 'Could not verify your club membership. Please try again later.'}
+            </div>
+          ) : null}
           <p style={{ color: '#9aa3b2', marginBottom: '1.5rem' }}>
             Connect with Strava to fetch your club activities and see the
             leaderboard.
@@ -66,7 +104,23 @@ export default async function Page() {
           >
             <LogoutButton />
           </div>
-          {result.data && result.data.length > 0 ? (
+          {errorParam ? (
+            <div
+              className="card"
+              style={{
+                marginBottom: '1rem',
+                border: '1px solid #b91c1c',
+                background: '#7f1d1d',
+                color: '#fee2e2',
+              }}
+            >
+              {errorParam === 'not_in_club'
+                ? 'Your Strava account is not a member of the required club.'
+                : errorParam === 'invalid_club_id'
+                ? 'The club is misconfigured. Please contact the admin.'
+                : 'Could not verify your club membership. Please try again later.'}
+            </div>
+          ) : result.ok && result.data && result.data.length > 0 ? (
             <LeaderboardTable data={result.data} />
           ) : (
             <div className="card">
