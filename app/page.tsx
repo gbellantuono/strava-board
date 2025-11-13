@@ -42,12 +42,13 @@ async function getBaseUrl(): Promise<string> {
 export default async function Page({
   searchParams,
 }: {
-  searchParams?: Record<string, string | string[]>;
+  searchParams?: Promise<Record<string, string | string[]>>;
 }) {
   const cks = await cookies();
   const isLoggedIn = !!cks.get('strava_access_token');
+  const params = await searchParams;
   const errorParam =
-    typeof searchParams?.error === 'string' ? searchParams?.error : undefined;
+    typeof params?.error === 'string' ? params?.error : undefined;
   // Only fetch leaderboard when logged in and no error redirect present
   const result =
     isLoggedIn && !errorParam ? await getLeaderboard() : { ok: false };
