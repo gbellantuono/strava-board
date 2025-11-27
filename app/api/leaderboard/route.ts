@@ -92,6 +92,7 @@ export async function GET(req: NextRequest) {
       ? Math.max(afterEpoch, campaignStartEpoch)
       : afterEpoch ?? campaignStartEpoch;
   // Fetch list of authorized athletes from Supabase
+
   const { data: athletes, error } = await supabase
     .from('athletes')
     .select(
@@ -153,7 +154,6 @@ export async function GET(req: NextRequest) {
     // Track unique active weeks by Monday (UTC) date string
     const weekSet = new Set<string>();
     for (const a of runs) {
-      current.runs += 1;
       current.totalDistM += a.distance || 0;
       current.maxDistM = Math.max(current.maxDistM, a.distance || 0);
       current.totalTimeS += a.moving_time || 0;
@@ -186,6 +186,8 @@ export async function GET(req: NextRequest) {
       }
     }
     current.activeDays = daySet.size;
+    // Use distinct active days as the primary "runs" count
+    current.runs = current.activeDays;
     current.activeWeeks = weekSet.size;
     // Compute longest inactivity gap (in days) between sorted active days
     if (daySet.size > 0) {
