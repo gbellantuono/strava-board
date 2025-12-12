@@ -116,6 +116,34 @@ export async function GET(req: NextRequest) {
       `Athlete ${row.athlete_id}`;
     const access = await ensureAccessToken(row);
     if (!access) continue;
+    // For safety, also enforce club membership per athlete using their own token,
+    // so stale or non-member accounts in Supabase are not shown on the board.
+    if (CLUB_ID) {
+      const requiredId = Number(CLUB_ID);
+      if (!Number.isNaN(requiredId)) {
+        try {
+          const clubsRes = await fetch(
+            'https://www.strava.com/api/v3/athlete/clubs',
+            {
+              headers: { Authorization: `Bearer ${access}` },
+              cache: 'no-store',
+            }
+          );
+          if (!clubsRes.ok) {
+            continue;
+          }
+          const clubs = (await clubsRes.json()) as Array<{ id: number }>;
+          const isMember = clubs.some(
+            (c) => c && typeof c.id === 'number' && c.id === requiredId
+          );
+          if (!isMember) {
+            continue;
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
     let acts: StravaActivity[] = [];
     try {
       const params: string[] = ['per_page=50'];
