@@ -63,31 +63,9 @@ export default function Countdown({ target, label, tickMs = 50 }: Props) {
         justifyContent: 'flex-end',
         whiteSpace: 'nowrap',
         flex: '0 0 auto',
-        minWidth: 280,
       }}
     >
-      <span style={{ color: '#9aa3b2', fontSize: 14 }}>{title}:</span>
-      <strong
-        style={{
-          fontVariantNumeric: 'tabular-nums',
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          display: 'inline-block',
-          minWidth: '21ch',
-          textAlign: 'right',
-        }}
-        aria-live="polite"
-      >
-        {hydrated ? (
-          <>
-            {String(d).padStart(2, '0')}d {String(h).padStart(2, '0')}h{' '}
-            {String(m).padStart(2, '0')}m {String(s).padStart(2, '0')}s{' '}
-            {String(ms).padStart(3, '0')}ms
-          </>
-        ) : (
-          // Stable placeholder for SSR and initial client render to prevent hydration mismatch
-          <>00d 00h 00m 00s 000ms</>
-        )}
-      </strong>
+      <span style={{ color: '#9aa3b2', fontSize: 14 }}>No current deadline</span>
     </div>
   );
 }

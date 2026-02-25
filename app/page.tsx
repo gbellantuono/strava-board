@@ -10,7 +10,7 @@ async function getLeaderboard(): Promise<{
 }> {
   // Server Component fetch to API route. Avoid caching.
   const base = await getBaseUrl();
-  const defaultAfter = process.env.NEXT_PUBLIC_START_DATE || '2025-10-26';
+  const defaultAfter = process.env.NEXT_PUBLIC_START_DATE || '2026-02-27';
   const urlObj = new URL('/api/leaderboard', base);
   if (defaultAfter) urlObj.searchParams.set('after', defaultAfter);
   const url = urlObj.toString();

@@ -36,7 +36,7 @@ function parseDateToEpoch(input: string | null): number | null {
 }
 
 function parseTargetToEpoch(input: string | null): number {
-  const fallback = Math.floor(Date.parse('2025-12-11T14:00:00Z') / 1000); // default target
+  const fallback = Math.floor(Date.parse('2026-12-31T00:00:00Z') / 1000); // default target
   if (!input) return fallback;
   const d = new Date(input);
   const t = d.getTime();
@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
   const beforeEpoch = parseDateToEpoch(url.searchParams.get('before'));
   const targetEpoch = parseTargetToEpoch(url.searchParams.get('target'));
   // Enforce challenge start date (defaults to 2025-10-26 if not provided)
-  const startDateStr = process.env.NEXT_PUBLIC_START_DATE || '2025-10-26';
+  const startDateStr = process.env.NEXT_PUBLIC_START_DATE || '2026-02-27';
   const campaignStartEpoch = parseDateToEpoch(startDateStr);
   const effectiveAfterEpoch =
     afterEpoch && campaignStartEpoch
