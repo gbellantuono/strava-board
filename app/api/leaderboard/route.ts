@@ -3,10 +3,6 @@ import { hms, stravaFetch } from '../../../lib';
 import type { StravaActivity } from '../../../lib';
 import { supabase } from '../../../lib/supabase';
 import { ensureAccessToken, type AthleteRow } from '../../../lib/stravaAuth';
-import {
-  projectRunsActiveDays,
-  projectRunsActiveWeeks,
-} from '../../../lib/projection';
 
 type AthleteAgg = {
   name: string;
@@ -20,6 +16,13 @@ type AthleteAgg = {
   activeDays: number; // number of distinct calendar days with at least one run
   activeWeeks: number; // number of distinct calendar weeks with at least one run
   longestGapDays?: number; // longest inactivity gap in days between active days
+};
+
+type MonthlyAthleteAgg = {
+  runs: number; // active days in month
+  totalDistM: number;
+  totalTimeS: number;
+  daySet: Set<string>;
 };
 
 function parseDateToEpoch(input: string | null): number | null {
@@ -83,9 +86,8 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const afterEpoch = parseDateToEpoch(url.searchParams.get('after'));
   const beforeEpoch = parseDateToEpoch(url.searchParams.get('before'));
-  const targetEpoch = parseTargetToEpoch(url.searchParams.get('target'));
   // Enforce challenge start date (defaults to 2025-10-26 if not provided)
-  const startDateStr = process.env.NEXT_PUBLIC_START_DATE || '2026-02-27';
+  const startDateStr = process.env.NEXT_PUBLIC_START_DATE || '2026-03-01';
   const campaignStartEpoch = parseDateToEpoch(startDateStr);
   const effectiveAfterEpoch =
     afterEpoch && campaignStartEpoch
@@ -105,11 +107,13 @@ export async function GET(req: NextRequest) {
     );
   }
   if (!athletes || athletes.length === 0) {
-    return NextResponse.json([]);
+    return NextResponse.json({ leaderboard: [], monthly: [] });
   }
 
   // Aggregate across all athletes by fetching their personal activities
   const byAthlete = new Map<number, AthleteAgg>();
+  // Monthly breakdown: Map<athleteId, Map<monthKey, MonthlyAthleteAgg>>
+  const monthlyByAthlete = new Map<number, Map<string, MonthlyAthleteAgg>>();
   for (const row of athletes as AthleteRow[]) {
     const name =
       `${row.firstname ?? ''} ${row.lastname ?? ''}`.trim() ||
@@ -118,8 +122,8 @@ export async function GET(req: NextRequest) {
     if (!access) continue;
     let acts: StravaActivity[] = [];
     try {
-      const params: string[] = ['per_page=50'];
-      if (effectiveAfterEpoch) params.push(`after=${effectiveAfterEpoch}`);
+      // Fetch broadly (no campaign start filter) so monthly breakdown includes older months
+      const params: string[] = ['per_page=200'];
       if (beforeEpoch) params.push(`before=${beforeEpoch}`);
       acts = await stravaFetch<StravaActivity[]>(
         `/athlete/activities?${params.join('&')}`,
@@ -128,14 +132,10 @@ export async function GET(req: NextRequest) {
     } catch {
       continue;
     }
-    const runs = acts.filter((a) => {
+    // All runs (for monthly breakdown and stats)
+    const allRuns = acts.filter((a) => {
       const kind = (a.sport_type ?? a.type ?? '').toLowerCase();
-      const ts = a.start_date ? Date.parse(a.start_date) : NaN;
-      const inRange =
-        (!effectiveAfterEpoch ||
-          (!isNaN(ts) && ts >= effectiveAfterEpoch * 1000)) &&
-        (!beforeEpoch || (!isNaN(ts) && ts < beforeEpoch * 1000));
-      return kind.includes('run') && inRange;
+      return kind.includes('run');
     });
     const current = byAthlete.get(row.athlete_id) ?? {
       name,
@@ -149,11 +149,38 @@ export async function GET(req: NextRequest) {
       activeDays: 0,
       activeWeeks: 0,
     };
-    // Track unique active days (UTC date) for active-days projection
-    const daySet = new Set<string>();
-    // Track unique active weeks by Monday (UTC) date string
-    const weekSet = new Set<string>();
-    for (const a of runs) {
+    // Per-athlete monthly map (uses allRuns, not campaign-filtered)
+    if (!monthlyByAthlete.has(row.athlete_id)) {
+      monthlyByAthlete.set(row.athlete_id, new Map());
+    }
+    const athleteMonthly = monthlyByAthlete.get(row.athlete_id)!;
+    for (const a of allRuns) {
+      const kind_ts = a.start_date ? Date.parse(a.start_date) : NaN;
+      if (!isNaN(kind_ts)) {
+        const md = new Date(kind_ts);
+        const miso = new Date(
+          Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), md.getUTCDate())
+        )
+          .toISOString()
+          .slice(0, 10);
+        const monthKey = miso.slice(0, 7);
+        const mAgg = athleteMonthly.get(monthKey) ?? {
+          runs: 0,
+          totalDistM: 0,
+          totalTimeS: 0,
+          daySet: new Set<string>(),
+        };
+        mAgg.totalDistM += a.distance || 0;
+        mAgg.totalTimeS += a.moving_time || 0;
+        mAgg.daySet.add(miso);
+        mAgg.runs = mAgg.daySet.size;
+        athleteMonthly.set(monthKey, mAgg);
+      }
+    }
+    // Leaderboard aggregation: use allRuns for stats, campaign-filtered for run count
+    const campaignDaySet = new Set<string>();
+    const campaignWeekSet = new Set<string>();
+    for (const a of allRuns) {
       current.totalDistM += a.distance || 0;
       current.maxDistM = Math.max(current.maxDistM, a.distance || 0);
       current.totalTimeS += a.moving_time || 0;
@@ -167,38 +194,44 @@ export async function GET(req: NextRequest) {
       if (!isNaN(ts)) {
         if (ts > current.lastRunAtMs) current.lastRunAtMs = ts;
         if (ts < current.firstRunAtMs) current.firstRunAtMs = ts;
-        // Use UTC calendar date to count active days
+        // Use UTC calendar date
         const d = new Date(ts);
         const iso = new Date(
           Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
         )
           .toISOString()
           .slice(0, 10);
-        daySet.add(iso);
-        // Compute Monday (UTC) of this week to count active weeks
-        const dow = d.getUTCDay(); // 0=Sun..6=Sat
-        const daysSinceMon = (dow + 6) % 7; // 0 if Monday
-        const mondayMs =
-          Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) -
-          daysSinceMon * 86400000;
-        const mondayIso = new Date(mondayMs).toISOString().slice(0, 10);
-        weekSet.add(mondayIso);
+        // Check if this run falls within the campaign period for runs count
+        const inCampaign =
+          (!effectiveAfterEpoch || ts >= effectiveAfterEpoch * 1000) &&
+          (!beforeEpoch || ts < beforeEpoch * 1000);
+        if (inCampaign) {
+          campaignDaySet.add(iso);
+          // Compute Monday (UTC) of this week to count active weeks
+          const dow = d.getUTCDay(); // 0=Sun..6=Sat
+          const daysSinceMon = (dow + 6) % 7; // 0 if Monday
+          const mondayMs =
+            Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) -
+            daysSinceMon * 86400000;
+          const mondayIso = new Date(mondayMs).toISOString().slice(0, 10);
+          campaignWeekSet.add(mondayIso);
+        }
       }
     }
-    current.activeDays = daySet.size;
-    // Use distinct active days as the primary "runs" count
+    current.activeDays = campaignDaySet.size;
+    // Use distinct active days in campaign as the primary "runs" count
     current.runs = current.activeDays;
-    current.activeWeeks = weekSet.size;
+    current.activeWeeks = campaignWeekSet.size;
     // Compute longest inactivity gap (in days) between sorted active days
-    if (daySet.size > 0) {
-      const dayEpochs = Array.from(daySet)
+    if (campaignDaySet.size > 0) {
+      const dayEpochs = Array.from(campaignDaySet)
         .map((iso) => Date.parse(`${iso}T00:00:00Z`))
         .filter((n) => !isNaN(n))
         .sort((a, b) => a - b);
       let longestGapDays = 0;
       for (let i = 1; i < dayEpochs.length; i++) {
         const gapDays =
-          Math.floor((dayEpochs[i] - dayEpochs[i - 1]) / 86400000) - 1; // days strictly between
+          Math.floor((dayEpochs[i] - dayEpochs[i - 1]) / 86400000) - 1;
         if (gapDays > longestGapDays) longestGapDays = gapDays;
       }
       current.longestGapDays = Math.max(0, longestGapDays);
@@ -210,11 +243,15 @@ export async function GET(req: NextRequest) {
 
   const toMin = (s: number) => s / 60;
   const toKm = (m: number) => m / 1000;
-  const nowEpoch = Math.floor(Date.now() / 1000);
   const rows = Array.from(byAthlete.entries()).map(([athlete_id, agg]) => {
     const total_km = toKm(agg.totalDistM);
+    // Count total active days across all months for averages (not just campaign period)
+    const allMonthsMap = monthlyByAthlete.get(athlete_id);
+    const totalActiveDays = allMonthsMap
+      ? Array.from(allMonthsMap.values()).reduce((sum, m) => sum + m.runs, 0)
+      : 0;
     const avg_run_time_mins =
-      agg.runs > 0 ? toMin(agg.totalTimeS) / agg.runs : 0;
+      totalActiveDays > 0 ? toMin(agg.totalTimeS) / totalActiveDays : 0;
     const avg_pace_min_per_km =
       total_km > 0 ? toMin(agg.totalTimeS) / total_km : 0;
     const best_pace_min_per_km =
@@ -224,22 +261,18 @@ export async function GET(req: NextRequest) {
     const last_run = agg.lastRunAtMs
       ? new Date(agg.lastRunAtMs).toISOString()
       : null;
-    // Projection: weekly consistency model
-    // Assumption: one or more runs per active week. Estimate total active weeks from start to target
-    // using observed active-week rate (active weeks / weeks elapsed), then multiply by runs/active-week.
-    const startEpoch =
-      effectiveAfterEpoch ??
-      (isFinite(agg.firstRunAtMs) && agg.firstRunAtMs > 0
-        ? Math.floor(agg.firstRunAtMs / 1000)
-        : null);
-    const projected_runs = projectRunsActiveWeeks({
-      runs: agg.runs,
-      activeWeeks: agg.activeWeeks,
-      firstRunAtMs: agg.firstRunAtMs,
-      afterEpoch: effectiveAfterEpoch ?? null,
-      targetEpoch,
-      nowEpoch,
-    });
+    // Average runs per month: use monthly breakdown for this athlete
+    const athleteMonths = monthlyByAthlete.get(athlete_id);
+    let avg_runs_per_month = 0;
+    if (athleteMonths && athleteMonths.size > 0) {
+      const totalMonthlyRuns = Array.from(athleteMonths.values()).reduce(
+        (sum, m) => sum + m.runs,
+        0
+      );
+      avg_runs_per_month = Number(
+        (totalMonthlyRuns / athleteMonths.size).toFixed(1)
+      );
+    }
     const profile = (athletes as AthleteRow[]).find(
       (a) => a.athlete_id === athlete_id
     )?.profile; // quick lookup (dataset is small)
@@ -255,7 +288,7 @@ export async function GET(req: NextRequest) {
       average_pace_min_per_km: Number(avg_pace_min_per_km.toFixed(2)),
       best_pace_min_per_km,
       last_run,
-      projected_runs,
+      avg_runs_per_month,
     };
   });
 
@@ -287,5 +320,51 @@ export async function GET(req: NextRequest) {
     medal: positionMap.get(r.athlete_id)?.medal ?? null,
   }));
 
-  return NextResponse.json(withRank);
+  // Build monthly breakdown: collect all months, then per month sort runners by runs desc
+  const allMonths = new Set<string>();
+  for (const mMap of monthlyByAthlete.values()) {
+    for (const mk of mMap.keys()) allMonths.add(mk);
+  }
+  const monthsSorted = Array.from(allMonths)
+    .filter((mk) => mk >= '2025-10' && mk <= new Date().toISOString().slice(0, 7))
+    .sort()
+    .reverse(); // most recent first
+  const MONTH_NAMES = [
+    'January','February','March','April','May','June',
+    'July','August','September','October','November','December',
+  ];
+  const monthly = monthsSorted.map((mk) => {
+    const [yyyy, mm] = mk.split('-').map(Number);
+    const label = `${MONTH_NAMES[(mm || 1) - 1]} ${yyyy}`;
+    const runners: {
+      athlete_id: number;
+      athlete_name: string;
+      profile: string | null;
+      runs: number;
+      total_distance_km: number;
+      total_time_hms: string;
+    }[] = [];
+    for (const [aid, mMap] of monthlyByAthlete.entries()) {
+      const mAgg = mMap.get(mk);
+      if (!mAgg || mAgg.runs === 0) continue;
+      const aRow = (athletes as AthleteRow[]).find(
+        (a) => a.athlete_id === aid
+      );
+      const name =
+        `${aRow?.firstname ?? ''} ${aRow?.lastname ?? ''}`.trim() ||
+        `Athlete ${aid}`;
+      runners.push({
+        athlete_id: aid,
+        athlete_name: name,
+        profile: aRow?.profile ?? null,
+        runs: mAgg.runs,
+        total_distance_km: Number((mAgg.totalDistM / 1000).toFixed(2)),
+        total_time_hms: hms(mAgg.totalTimeS),
+      });
+    }
+    runners.sort((a, b) => b.runs - a.runs || b.total_distance_km - a.total_distance_km);
+    return { month: mk, label, runners };
+  });
+
+  return NextResponse.json({ leaderboard: withRank, monthly });
 }

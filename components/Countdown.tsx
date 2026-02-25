@@ -65,7 +65,7 @@ export default function Countdown({ target, label, tickMs = 50 }: Props) {
         flex: '0 0 auto',
       }}
     >
-      <span style={{ color: '#9aa3b2', fontSize: 14 }}>No current deadline</span>
+      <span style={{ color: '#9aa3b2', fontSize: 14 }}></span>
     </div>
   );
 }

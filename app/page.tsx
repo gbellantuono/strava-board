@@ -1,4 +1,5 @@
 import LeaderboardTable, { AthleteStats } from '@/components/LeaderboardTable';
+import MonthlyStats, { MonthData } from '@/components/MonthlyStats';
 import Countdown from '@/components/Countdown';
 import LoginButton from '@/components/LoginButton';
 import LogoutButton from '@/components/LogoutButton';
@@ -7,10 +8,11 @@ import { headers, cookies } from 'next/headers';
 async function getLeaderboard(): Promise<{
   ok: boolean;
   data?: AthleteStats[];
+  monthly?: MonthData[];
 }> {
   // Server Component fetch to API route. Avoid caching.
   const base = await getBaseUrl();
-  const defaultAfter = process.env.NEXT_PUBLIC_START_DATE || '2026-02-27';
+  const defaultAfter = process.env.NEXT_PUBLIC_START_DATE || '2026-03-01';
   const urlObj = new URL('/api/leaderboard', base);
   if (defaultAfter) urlObj.searchParams.set('after', defaultAfter);
   const url = urlObj.toString();
@@ -24,7 +26,12 @@ async function getLeaderboard(): Promise<{
     },
   });
   if (!res.ok) return { ok: false };
-  return { ok: true, data: (await res.json()) as AthleteStats[] };
+  const json = await res.json();
+  return {
+    ok: true,
+    data: json.leaderboard as AthleteStats[],
+    monthly: json.monthly as MonthData[],
+  };
 }
 
 async function getBaseUrl(): Promise<string> {
@@ -66,7 +73,10 @@ export default async function Page({
         }}
       >
         <h1 style={{ margin: 0 }}>🏃‍♂️ VEC Running Leaderboard</h1>
-        <Countdown />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <Countdown />
+          {isLoggedIn && <LogoutButton />}
+        </div>
       </div>
 
       {!isLoggedIn ? (
@@ -96,15 +106,6 @@ export default async function Page({
         </>
       ) : (
         <>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              marginBottom: '1rem',
-            }}
-          >
-            <LogoutButton />
-          </div>
           {errorParam ? (
             <div
               className="card"
@@ -121,11 +122,22 @@ export default async function Page({
                 ? 'The club is misconfigured. Please contact the admin.'
                 : 'Could not verify your club membership. Please try again later.'}
             </div>
-          ) : result.ok && result.data && result.data.length > 0 ? (
-            <LeaderboardTable data={result.data} />
+          ) : result.ok ? (
+            <>
+              {result.data && result.data.length > 0 ? (
+                <LeaderboardTable data={result.data} />
+              ) : (
+                <div className="card">
+                  No running activities in the current challenge period yet.
+                </div>
+              )}
+              {result.monthly && result.monthly.length > 0 && (
+                <MonthlyStats data={result.monthly} />
+              )}
+            </>
           ) : (
             <div className="card">
-              No running activities found yet. Try again later.
+              Could not load leaderboard. Try again later.
             </div>
           )}
         </>
