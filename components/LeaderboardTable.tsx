@@ -171,7 +171,7 @@ export default function LeaderboardTable({ data }: Props) {
                 borderTopRightRadius: 8,
               }}
             >
-              1st March 2026 Onwards
+              From 1st March 2026
             </th>
             <th
               colSpan={8}
@@ -188,24 +188,16 @@ export default function LeaderboardTable({ data }: Props) {
             <Header label="Pos" keyName="position" style={{ borderLeft: groupBorder }} />
             <Header label="Athlete" keyName="athlete_name" />
             <Header label="Runs" keyName="total_runs" style={{ borderRight: groupBorder }} />
-            <Header
-              label="Avg runs/mo"
-              keyName="avg_runs_per_month"
+            <Header label="Avg runs/mo" keyName="avg_runs_per_month"
               title="Average number of active run days per month"
               style={{ borderLeft: groupBorder }}
             />
             <Header label="Total km" keyName="total_distance_km" />
             <Header label="Max km" keyName="max_distance_km" />
             <Header label="Total Time" keyName="total_run_time_hms" />
-            <Header label="Avg Run (min)" keyName="average_run_time_mins" />
-            <Header
-              label="Avg Pace (m:ss/km)"
-              keyName="average_pace_min_per_km"
-            />
-            <Header
-              label="Best Pace (m:ss/km)"
-              keyName="best_pace_min_per_km"
-            />
+            <Header label="Avg Run" keyName="average_run_time_mins" title="Average run time in minutes" />
+            <Header label="Avg Pace" keyName="average_pace_min_per_km" title="Average pace (min:sec per km)" />
+            <Header label="Best Pace" keyName="best_pace_min_per_km" title="Best pace (min:sec per km)" />
             <Header label="Last Run" keyName="last_run" style={{ borderRight: groupBorder }} />
           </tr>
         </thead>

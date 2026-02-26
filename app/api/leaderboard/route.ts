@@ -21,7 +21,10 @@ type AthleteAgg = {
 type MonthlyAthleteAgg = {
   runs: number; // active days in month
   totalDistM: number;
+  maxDistM: number;
   totalTimeS: number;
+  bestPaceMinPerKm: number;
+  lastRunAtMs: number;
   daySet: Set<string>;
 };
 
@@ -167,11 +170,22 @@ export async function GET(req: NextRequest) {
         const mAgg = athleteMonthly.get(monthKey) ?? {
           runs: 0,
           totalDistM: 0,
+          maxDistM: 0,
           totalTimeS: 0,
+          bestPaceMinPerKm: Number.POSITIVE_INFINITY,
+          lastRunAtMs: 0,
           daySet: new Set<string>(),
         };
         mAgg.totalDistM += a.distance || 0;
+        mAgg.maxDistM = Math.max(mAgg.maxDistM, a.distance || 0);
         mAgg.totalTimeS += a.moving_time || 0;
+        const mDistKm = (a.distance || 0) / 1000;
+        const mTimeMin = (a.moving_time || 0) / 60;
+        if (mDistKm > 0 && mTimeMin > 0) {
+          const mPace = mTimeMin / mDistKm;
+          if (mPace < mAgg.bestPaceMinPerKm) mAgg.bestPaceMinPerKm = mPace;
+        }
+        if (kind_ts > mAgg.lastRunAtMs) mAgg.lastRunAtMs = kind_ts;
         mAgg.daySet.add(miso);
         mAgg.runs = mAgg.daySet.size;
         athleteMonthly.set(monthKey, mAgg);
@@ -342,7 +356,12 @@ export async function GET(req: NextRequest) {
       profile: string | null;
       runs: number;
       total_distance_km: number;
-      total_time_hms: string;
+      max_distance_km: number;
+      total_run_time_hms: string;
+      average_run_time_mins: number;
+      average_pace_min_per_km: number;
+      best_pace_min_per_km: number;
+      last_run: string | null;
     }[] = [];
     for (const [aid, mMap] of monthlyByAthlete.entries()) {
       const mAgg = mMap.get(mk);
@@ -353,13 +372,20 @@ export async function GET(req: NextRequest) {
       const name =
         `${aRow?.firstname ?? ''} ${aRow?.lastname ?? ''}`.trim() ||
         `Athlete ${aid}`;
+      const mTotalKm = mAgg.totalDistM / 1000;
+      const mTotalMin = mAgg.totalTimeS / 60;
       runners.push({
         athlete_id: aid,
         athlete_name: name,
         profile: aRow?.profile ?? null,
         runs: mAgg.runs,
-        total_distance_km: Number((mAgg.totalDistM / 1000).toFixed(2)),
-        total_time_hms: hms(mAgg.totalTimeS),
+        total_distance_km: Number(mTotalKm.toFixed(2)),
+        max_distance_km: Number((mAgg.maxDistM / 1000).toFixed(2)),
+        total_run_time_hms: hms(mAgg.totalTimeS),
+        average_run_time_mins: mAgg.runs > 0 ? Number((mTotalMin / mAgg.runs).toFixed(2)) : 0,
+        average_pace_min_per_km: mTotalKm > 0 ? Number((mTotalMin / mTotalKm).toFixed(2)) : 0,
+        best_pace_min_per_km: mAgg.bestPaceMinPerKm === Number.POSITIVE_INFINITY ? 0 : Number(mAgg.bestPaceMinPerKm.toFixed(2)),
+        last_run: mAgg.lastRunAtMs ? new Date(mAgg.lastRunAtMs).toISOString() : null,
       });
     }
     runners.sort((a, b) => b.runs - a.runs || b.total_distance_km - a.total_distance_km);

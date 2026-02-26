@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 export type MonthlyRunner = {
   athlete_id: number;
@@ -8,7 +8,12 @@ export type MonthlyRunner = {
   profile: string | null;
   runs: number;
   total_distance_km: number;
-  total_time_hms: string;
+  max_distance_km: number;
+  total_run_time_hms: string;
+  average_run_time_mins: number;
+  average_pace_min_per_km: number;
+  best_pace_min_per_km: number;
+  last_run: string | null;
 };
 
 export type MonthData = {
@@ -19,18 +24,27 @@ export type MonthData = {
 
 type Props = { data: MonthData[] };
 
+type SortKey = keyof MonthlyRunner;
+
 export default function MonthlyStats({ data }: Props) {
-  // Most recent month is active by default
   const [activeMonth, setActiveMonth] = useState<string>(
     data.length > 0 ? data[0].month : ''
   );
+  const [sortKey, setSortKey] = useState<SortKey>('runs');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  if (data.length === 0) return null;
+  // Format minutes-per-kilometer (decimal minutes) into m:ss per km
+  const formatPace = (decimalMinutes: number): string => {
+    if (!decimalMinutes || decimalMinutes <= 0) return '-';
+    const mins = Math.floor(decimalMinutes);
+    const secs = Math.round((decimalMinutes - mins) * 60);
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  };
 
   const Avatar = ({
     src,
     alt,
-    size = 24,
+    size = 28,
   }: {
     src?: string | null;
     alt: string;
@@ -91,7 +105,62 @@ export default function MonthlyStats({ data }: Props) {
     );
   };
 
+  if (data.length === 0) return null;
+
   const activeData = data.find((d) => d.month === activeMonth);
+
+  const sorted = useMemo(() => {
+    if (!activeData) return [];
+    // Assign positions based on runs desc, then distance desc
+    const ranked = [...activeData.runners].sort(
+      (a, b) => b.runs - a.runs || b.total_distance_km - a.total_distance_km
+    );
+    const withPos = ranked.map((r, idx) => ({ ...r, position: idx + 1 }));
+    // Now sort by chosen key
+    return [...withPos].sort((a, b) => {
+      const va = a[sortKey as keyof typeof a];
+      const vb = b[sortKey as keyof typeof b];
+      if (typeof va === 'number' && typeof vb === 'number')
+        return sortDir === 'asc' ? va - vb : vb - va;
+      return sortDir === 'asc'
+        ? String(va ?? '').localeCompare(String(vb ?? ''))
+        : String(vb ?? '').localeCompare(String(va ?? ''));
+    });
+  }, [activeData, sortKey, sortDir]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'athlete_name' ? 'asc' : 'desc');
+    }
+  };
+
+  const Header = ({
+    label,
+    keyName,
+    title,
+    style,
+  }: {
+    label: string;
+    keyName: SortKey;
+    title?: string;
+    style?: React.CSSProperties;
+  }) => (
+    <th
+      onClick={() => toggleSort(keyName)}
+      title={title}
+      style={{
+        cursor: 'pointer',
+        userSelect: 'none',
+        textAlign: 'center',
+        ...style,
+      }}
+    >
+      {label} {sortKey === keyName ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+    </th>
+  );
 
   return (
     <div style={{ marginTop: '2rem' }}>
@@ -129,90 +198,67 @@ export default function MonthlyStats({ data }: Props) {
         ))}
       </div>
 
-      {/* Active month card */}
-      {activeData && activeData.runners.length > 0 ? (
-        <div
-          className="card"
-          style={{ display: 'flex', flexDirection: 'column', gap: 0 }}
-        >
-          {activeData.runners.map((runner, idx) => (
-            <div
-              key={runner.athlete_id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '0.65rem 0.5rem',
-                borderTop: idx > 0 ? '1px solid #1e2952' : undefined,
-              }}
-            >
-              {/* Position */}
-              <span
-                style={{
-                  width: 28,
-                  textAlign: 'center',
-                  fontWeight: 700,
-                  color:
-                    idx === 0
-                      ? '#fbbf24'
-                      : idx === 1
-                      ? '#d1d5db'
-                      : idx === 2
-                      ? '#d97706'
-                      : '#9aa3b2',
-                  fontSize: 15,
-                }}
-              >
-                {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : idx + 1}
-              </span>
-
-              {/* Avatar + Name */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                <Avatar src={runner.profile} alt={runner.athlete_name} />
-                <span
-                  style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    fontSize: 14,
-                  }}
-                >
-                  {runner.athlete_name}
-                </span>
-              </div>
-
-              {/* Stats */}
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 16,
-                  alignItems: 'center',
-                  flexShrink: 0,
-                  fontSize: 13,
-                  color: '#9aa3b2',
-                }}
-              >
-                <span title="Active days (runs)">
-                  <strong style={{ color: '#e7eaf2' }}>{runner.runs}</strong>{' '}
-                  runs
-                </span>
-                <span title="Total distance">
-                  {runner.total_distance_km.toFixed(1)} km
-                </span>
-                <span title="Total time" style={{ fontFamily: 'monospace' }}>
-                  {runner.total_time_hms}
-                </span>
-              </div>
-            </div>
-          ))}
+      {/* Active month table */}
+      {sorted.length > 0 ? (
+        <div style={{ padding: 0 }}>
+          <table style={{ width: '100%', textAlign: 'center' }}>
+            <thead>
+              <tr>
+                <Header label="Pos" keyName="runs" />
+                <Header label="Athlete" keyName="athlete_name" />
+                <Header label="Runs" keyName="runs" />
+                <Header label="Total km" keyName="total_distance_km" />
+                <Header label="Max km" keyName="max_distance_km" />
+                <Header label="Total Time" keyName="total_run_time_hms" />
+                <Header label="Avg Run" keyName="average_run_time_mins" title="Average run time in minutes" />
+                <Header label="Avg Pace" keyName="average_pace_min_per_km" title="Average pace (min:sec per km)" />
+                <Header label="Best Pace" keyName="best_pace_min_per_km" title="Best pace (min:sec per km)" />
+                <Header label="Last Run" keyName="last_run" />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((row) => (
+                <tr key={row.athlete_id}>
+                  <td>
+                    {row.position <= 3
+                      ? row.position === 1
+                        ? '🥇'
+                        : row.position === 2
+                        ? '🥈'
+                        : '🥉'
+                      : row.position}
+                  </td>
+                  <td
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      justifyContent: 'flex-start',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <Avatar src={row.profile} alt={row.athlete_name} />
+                    <span>{row.athlete_name}</span>
+                  </td>
+                  <td>{row.runs}</td>
+                  <td>{row.total_distance_km.toFixed(2)}</td>
+                  <td>{row.max_distance_km.toFixed(2)}</td>
+                  <td>{row.total_run_time_hms}</td>
+                  <td>{row.average_run_time_mins.toFixed(1)}</td>
+                  <td>{formatPace(row.average_pace_min_per_km)}</td>
+                  <td>{formatPace(row.best_pace_min_per_km)}</td>
+                  <td>
+                    {row.last_run
+                      ? (() => {
+                          const d = new Date(row.last_run);
+                          return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+                        })()
+                      : '-'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="card" style={{ color: '#9aa3b2' }}>
