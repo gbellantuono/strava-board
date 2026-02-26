@@ -30,7 +30,10 @@ export async function ensureAccessToken(
     return row.access_token;
   }
 
-  if (!row.refresh_token) return row.access_token ?? null;
+  if (!row.refresh_token) {
+    console.warn(`Athlete ${row.athlete_id}: no refresh_token, returning existing access_token`);
+    return row.access_token ?? null;
+  }
 
   const body = new URLSearchParams({
     client_id: CLIENT_ID,
@@ -45,7 +48,11 @@ export async function ensureAccessToken(
     body,
     cache: 'no-store',
   });
-  if (!res.ok) return row.access_token ?? null;
+  if (!res.ok) {
+    const text = await res.text();
+    console.warn(`Athlete ${row.athlete_id}: token refresh failed (${res.status}): ${text}`);
+    return null;
+  }
   const json = (await res.json()) as RefreshResponse;
   const expiresAtIso = json.expires_at
     ? new Date(json.expires_at * 1000).toISOString()

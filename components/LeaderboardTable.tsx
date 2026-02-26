@@ -9,7 +9,6 @@ export type AthleteStats = {
   medal: 'gold' | 'silver' | 'bronze' | null;
   profile: string | null;
   total_runs: number;
-  avg_runs_per_month: number;
   total_distance_km: number;
   max_distance_km: number;
   total_run_time_hms: string;
@@ -19,15 +18,25 @@ export type AthleteStats = {
   last_run: string | null; // ISO
 };
 
-type Props = { data: AthleteStats[] };
+type Props = {
+  competition: AthleteStats[];
+  thisMonth: AthleteStats[];
+};
 
 type SortKey = keyof AthleteStats;
+type ViewMode = 'competition' | 'thisMonth';
 
-export default function LeaderboardTable({ data }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>('position');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+export default function LeaderboardTable({ competition, thisMonth }: Props) {
+  const [view, setView] = useState<ViewMode>('thisMonth');
+  const [sortKey, setSortKey] = useState<SortKey>('total_runs');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  // Format minutes-per-kilometer (decimal minutes) into m:ss per km
+  const data = view === 'competition' ? competition : thisMonth;
+  const groupLabel =
+    view === 'competition'
+      ? 'Start of Competition (Oct 2025)'
+      : 'This Month';
+
   const formatPace = (minPerKm: number) => {
     if (!isFinite(minPerKm) || minPerKm <= 0) return '-';
     const totalSeconds = Math.round(minPerKm * 60);
@@ -54,14 +63,13 @@ export default function LeaderboardTable({ data }: Props) {
           height: size,
           display: 'inline-block',
           borderRadius: '50%',
-          background: '#d1d5db', // gray-300 fallback when no image
+          background: '#d1d5db',
           border: '1px solid #2a3345',
           overflow: 'hidden',
           flex: '0 0 auto',
         }}
         aria-label={alt}
       >
-        {/* Fallback initial letter centered */}
         <span
           style={{
             position: 'absolute',
@@ -69,14 +77,14 @@ export default function LeaderboardTable({ data }: Props) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#1f2937', // gray-800
+            color: '#1f2937',
             fontSize: Math.max(10, Math.floor(size * 0.5)),
             fontWeight: 600,
             userSelect: 'none',
           }}
           aria-hidden={!!src}
         >
-          {letter || '·'}
+          {letter || '\u00b7'}
         </span>
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -93,7 +101,6 @@ export default function LeaderboardTable({ data }: Props) {
               objectFit: 'cover',
             }}
             onError={(e) => {
-              // Hide the image if it fails to load so the gray background shows
               (e.currentTarget as HTMLImageElement).style.display = 'none';
             }}
           />
@@ -119,7 +126,7 @@ export default function LeaderboardTable({ data }: Props) {
 
   const onHeaderClick = (key: SortKey) => {
     if (key === sortKey)
-      setSortDir((d: 'asc' | 'desc') => (d === 'asc' ? 'desc' : 'asc'));
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else {
       setSortKey(key);
       setSortDir('desc');
@@ -138,7 +145,7 @@ export default function LeaderboardTable({ data }: Props) {
     style?: React.CSSProperties;
   }) => (
     <th role="button" onClick={() => onHeaderClick(keyName)} title={title} style={style}>
-      {label} {sortKey === keyName ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+      {label} {sortKey === keyName ? (sortDir === 'asc' ? '\u25b2' : '\u25bc') : ''}
     </th>
   );
 
@@ -158,95 +165,122 @@ export default function LeaderboardTable({ data }: Props) {
     borderRight: groupBorder,
   };
 
+  const toggleBtnBase: React.CSSProperties = {
+    padding: '0.4rem 1rem',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontWeight: 700,
+    fontSize: 14,
+  };
+
   return (
-    <div style={{ padding: 0 }}>
-      <table style={{ width: '100%', textAlign: 'center' }}>
-        <thead>
-          <tr>
-            <th
-              colSpan={3}
-              style={{
-                ...groupHeaderStyle,
-                borderTopLeftRadius: 8,
-                borderTopRightRadius: 8,
-              }}
-            >
-              From 1st March 2026
-            </th>
-            <th
-              colSpan={8}
-              style={{
-                ...groupHeaderStyle,
-                borderTopLeftRadius: 8,
-                borderTopRightRadius: 8,
-              }}
-            >
-              Lifetime
-            </th>
-          </tr>
-          <tr>
-            <Header label="Pos" keyName="position" style={{ borderLeft: groupBorder }} />
-            <Header label="Athlete" keyName="athlete_name" />
-            <Header label="Runs" keyName="total_runs" style={{ borderRight: groupBorder }} />
-            <Header label="Avg runs/mo" keyName="avg_runs_per_month"
-              title="Average number of active run days per month"
-              style={{ borderLeft: groupBorder }}
-            />
-            <Header label="Total km" keyName="total_distance_km" />
-            <Header label="Max km" keyName="max_distance_km" />
-            <Header label="Total Time" keyName="total_run_time_hms" />
-            <Header label="Avg Run" keyName="average_run_time_mins" title="Average run time in minutes" />
-            <Header label="Avg Pace" keyName="average_pace_min_per_km" title="Average pace (min:sec per km)" />
-            <Header label="Best Pace" keyName="best_pace_min_per_km" title="Best pace (min:sec per km)" />
-            <Header label="Last Run" keyName="last_run" style={{ borderRight: groupBorder }} />
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((row: AthleteStats, rowIdx: number) => {
-            const isLast = rowIdx === sorted.length - 1;
-            return (
-            <tr key={row.athlete_id}>
-              <td style={{ borderLeft: groupBorder, background: groupBg, ...(isLast ? { borderBottom: groupBorder, borderBottomLeftRadius: 8 } : {}) }}>
-                {row.position <= 3
-                  ? row.position === 1
-                    ? '🥇'
-                    : row.position === 2
-                    ? '🥈'
-                    : '🥉'
-                  : row.position}
-              </td>
-              <td
+    <div>
+      {/* Toggle */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: '1rem' }}>
+        <button
+          onClick={() => { setView('thisMonth'); setSortKey('total_runs'); setSortDir('desc'); }}
+          style={{
+            ...toggleBtnBase,
+            background: view === 'thisMonth' ? '#1e2952' : '#121832',
+            color: view === 'thisMonth' ? '#ffffff' : '#9aa3b2',
+            border: view === 'thisMonth' ? '2px solid #ffffff' : '1px solid #2a3345',
+          }}
+        >
+          This Month
+        </button>
+        <button
+          onClick={() => { setView('competition'); setSortKey('total_runs'); setSortDir('desc'); }}
+          style={{
+            ...toggleBtnBase,
+            background: view === 'competition' ? '#1e2952' : '#121832',
+            color: view === 'competition' ? '#ffffff' : '#9aa3b2',
+            border: view === 'competition' ? '2px solid #ffffff' : '1px solid #2a3345',
+          }}
+        >
+          Start of Competition
+        </button>
+      </div>
+
+      {data.length === 0 ? (
+        <div className="card" style={{ color: '#9aa3b2' }}>
+          No running activities recorded for this period yet.
+        </div>
+      ) : (
+      <div style={{ padding: 0 }}>
+        <table style={{ width: '100%', textAlign: 'center' }}>
+          <thead>
+            <tr>
+              <th
+                colSpan={10}
                 style={{
-                  background: groupBg,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  justifyContent: 'flex-start',
-                  textAlign: 'left',
-                  ...(isLast ? { borderBottom: groupBorder } : {}),
+                  ...groupHeaderStyle,
+                  borderTopLeftRadius: 8,
+                  borderTopRightRadius: 8,
                 }}
               >
-                <Avatar src={row.profile ?? undefined} alt={row.athlete_name} />
-                <span>{row.athlete_name}</span>
-              </td>
-              <td style={{ borderRight: groupBorder, background: groupBg, ...(isLast ? { borderBottom: groupBorder, borderBottomRightRadius: 8 } : {}) }}>{row.total_runs}</td>
-              <td style={{ borderLeft: groupBorder, background: groupBg, ...(isLast ? { borderBottom: groupBorder, borderBottomLeftRadius: 8 } : {}) }}>{row.avg_runs_per_month}</td>
-              <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.total_distance_km.toFixed(2)}</td>
-              <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.max_distance_km.toFixed(2)}</td>
-              <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.total_run_time_hms}</td>
-              <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.average_run_time_mins.toFixed(1)}</td>
-              <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{formatPace(row.average_pace_min_per_km)}</td>
-              <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{formatPace(row.best_pace_min_per_km)}</td>
-              <td style={{ borderRight: groupBorder, background: groupBg, ...(isLast ? { borderBottom: groupBorder, borderBottomRightRadius: 8 } : {}) }}>
-                {row.last_run
-                  ? (() => { const d = new Date(row.last_run); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()}`; })()
-                  : '-'}
-              </td>
+                {groupLabel}
+              </th>
             </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            <tr>
+              <Header label="Pos" keyName="position" style={{ borderLeft: groupBorder }} />
+              <Header label="Athlete" keyName="athlete_name" />
+              <Header label="Runs" keyName="total_runs" />
+              <Header label="Total km" keyName="total_distance_km" />
+              <Header label="Max km" keyName="max_distance_km" />
+              <Header label="Total Time" keyName="total_run_time_hms" />
+              <Header label="Avg Run" keyName="average_run_time_mins" title="Average run time in minutes" />
+              <Header label="Avg Pace" keyName="average_pace_min_per_km" title="Average pace (min:sec per km)" />
+              <Header label="Best Pace" keyName="best_pace_min_per_km" title="Best pace (min:sec per km)" />
+              <Header label="Last Run" keyName="last_run" style={{ borderRight: groupBorder }} />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((row: AthleteStats, rowIdx: number) => {
+              const isLast = rowIdx === sorted.length - 1;
+              return (
+              <tr key={row.athlete_id}>
+                <td style={{ borderLeft: groupBorder, background: groupBg, ...(isLast ? { borderBottom: groupBorder, borderBottomLeftRadius: 8 } : {}) }}>
+                  {row.position <= 3
+                    ? row.position === 1
+                      ? '\ud83e\udd47'
+                      : row.position === 2
+                      ? '\ud83e\udd48'
+                      : '\ud83e\udd49'
+                    : row.position}
+                </td>
+                <td
+                  style={{
+                    background: groupBg,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    justifyContent: 'flex-start',
+                    textAlign: 'left',
+                    ...(isLast ? { borderBottom: groupBorder } : {}),
+                  }}
+                >
+                  <Avatar src={row.profile ?? undefined} alt={row.athlete_name} />
+                  <span>{row.athlete_name}</span>
+                </td>
+                <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.total_runs}</td>
+                <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.total_distance_km.toFixed(2)}</td>
+                <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.max_distance_km.toFixed(2)}</td>
+                <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.total_run_time_hms}</td>
+                <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{row.average_run_time_mins.toFixed(1)}</td>
+                <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{formatPace(row.average_pace_min_per_km)}</td>
+                <td style={{ background: groupBg, ...(isLast ? { borderBottom: groupBorder } : {}) }}>{formatPace(row.best_pace_min_per_km)}</td>
+                <td style={{ borderRight: groupBorder, background: groupBg, ...(isLast ? { borderBottom: groupBorder, borderBottomRightRadius: 8 } : {}) }}>
+                  {row.last_run
+                    ? (() => { const d = new Date(row.last_run); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()}`; })()
+                    : '-'}
+                </td>
+              </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      )}
     </div>
   );
 }

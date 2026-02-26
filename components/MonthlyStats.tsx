@@ -115,7 +115,11 @@ export default function MonthlyStats({ data }: Props) {
     const ranked = [...activeData.runners].sort(
       (a, b) => b.runs - a.runs || b.total_distance_km - a.total_distance_km
     );
-    const withPos = ranked.map((r, idx) => ({ ...r, position: idx + 1 }));
+    const withPos: (MonthlyRunner & { position: number })[] = [];
+    ranked.forEach((r, idx) => {
+      const pos = idx === 0 ? 1 : r.runs === ranked[idx - 1].runs ? withPos[idx - 1].position : idx + 1;
+      withPos.push({ ...r, position: pos });
+    });
     // Now sort by chosen key
     return [...withPos].sort((a, b) => {
       const va = a[sortKey as keyof typeof a];
@@ -184,10 +188,10 @@ export default function MonthlyStats({ data }: Props) {
               borderRadius: 8,
               border:
                 activeMonth === m.month
-                  ? '2px solid #fc4c02'
+                  ? '2px solid #ffffff'
                   : '1px solid #2a3345',
               background: activeMonth === m.month ? '#1e2952' : '#121832',
-              color: activeMonth === m.month ? '#fc4c02' : '#9aa3b2',
+              color: activeMonth === m.month ? '#ffffff' : '#9aa3b2',
               fontWeight: activeMonth === m.month ? 700 : 400,
               cursor: 'pointer',
               fontSize: 14,

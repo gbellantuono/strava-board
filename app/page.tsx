@@ -7,14 +7,13 @@ import { headers, cookies } from 'next/headers';
 
 async function getLeaderboard(): Promise<{
   ok: boolean;
-  data?: AthleteStats[];
+  competition?: AthleteStats[];
+  thisMonth?: AthleteStats[];
   monthly?: MonthData[];
 }> {
   // Server Component fetch to API route. Avoid caching.
   const base = await getBaseUrl();
-  const defaultAfter = process.env.NEXT_PUBLIC_START_DATE || '2026-03-01';
   const urlObj = new URL('/api/leaderboard', base);
-  if (defaultAfter) urlObj.searchParams.set('after', defaultAfter);
   const url = urlObj.toString();
   const hs = await headers();
   const res = await fetch(url, {
@@ -29,7 +28,8 @@ async function getLeaderboard(): Promise<{
   const json = await res.json();
   return {
     ok: true,
-    data: json.leaderboard as AthleteStats[],
+    competition: json.competition as AthleteStats[],
+    thisMonth: json.thisMonth as AthleteStats[],
     monthly: json.monthly as MonthData[],
   };
 }
@@ -124,8 +124,12 @@ export default async function Page({
             </div>
           ) : result.ok ? (
             <>
-              {result.data && result.data.length > 0 ? (
-                <LeaderboardTable data={result.data} />
+              {(result.competition && result.competition.length > 0) ||
+               (result.thisMonth && result.thisMonth.length > 0) ? (
+                <LeaderboardTable
+                  competition={result.competition ?? []}
+                  thisMonth={result.thisMonth ?? []}
+                />
               ) : (
                 <div className="card">
                   No running activities in the current challenge period yet.
