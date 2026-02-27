@@ -218,14 +218,14 @@ export async function GET(req: NextRequest) {
         last_run: lastRunAtMs ? new Date(lastRunAtMs).toISOString() : null,
       });
     }
-    // Rank (ties on runs get the same position)
+    // Rank (ties on runs get the same position, dense ranking: no skipped positions)
     rows.sort((a, b) => b.total_runs - a.total_runs || b.total_distance_km - a.total_distance_km);
     rows.forEach((r, idx, arr) => {
       if (idx === 0) {
         r.position = 1;
       } else {
         const prev = arr[idx - 1];
-        r.position = r.total_runs === prev.total_runs ? prev.position : idx + 1;
+        r.position = r.total_runs === prev.total_runs ? prev.position : prev.position + 1;
       }
       r.medal = r.position === 1 ? 'gold' : r.position === 2 ? 'silver' : r.position === 3 ? 'bronze' : null;
     });
