@@ -117,7 +117,7 @@ export default function MonthlyStats({ data }: Props) {
     );
     const withPos: (MonthlyRunner & { position: number })[] = [];
     ranked.forEach((r, idx) => {
-      const pos = idx === 0 ? 1 : r.runs === ranked[idx - 1].runs ? withPos[idx - 1].position : idx + 1;
+      const pos = idx === 0 ? 1 : r.runs === ranked[idx - 1].runs ? withPos[idx - 1].position : withPos[idx - 1].position + 1;
       withPos.push({ ...r, position: pos });
     });
     // Now sort by chosen key
