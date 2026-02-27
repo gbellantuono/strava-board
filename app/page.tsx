@@ -52,7 +52,7 @@ export default async function Page({
   searchParams?: Promise<Record<string, string | string[]>>;
 }) {
   const cks = await cookies();
-  const isLoggedIn = !!cks.get('strava_access_token');
+  const isLoggedIn = !!cks.get('strava_access_token') || !!cks.get('strava_session');
   const params = await searchParams;
   const errorParam =
     typeof params?.error === 'string' ? params?.error : undefined;

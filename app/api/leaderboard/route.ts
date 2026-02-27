@@ -3,6 +3,7 @@ import { hms, stravaFetch } from '../../../lib';
 import type { StravaActivity } from '../../../lib';
 import { supabase } from '../../../lib/supabase';
 import { ensureAccessToken, type AthleteRow } from '../../../lib/stravaAuth';
+import { verifySessionToken } from '../../../lib/session';
 
 type MonthlyAthleteAgg = {
   runs: number; // active days in month
@@ -30,38 +31,67 @@ function parseDateToEpoch(input: string | null): number | null {
 const CLUB_ID = process.env.STRAVA_CLUB_ID;
 
 export async function GET(req: NextRequest) {
-  // Require logged-in user and enforce club membership using their Strava cookie token
-  const token = req.cookies.get('strava_access_token')?.value;
-  if (!token) {
+  // Authenticate the user via long-lived session cookie or short-lived access token cookie
+  let token = req.cookies.get('strava_access_token')?.value ?? null;
+  let sessionAthleteId: number | null = null;
+
+  // Try the session cookie first (survives Strava token expiry)
+  const sessionCookie = req.cookies.get('strava_session')?.value;
+  if (sessionCookie) {
+    const session = verifySessionToken(sessionCookie);
+    if (session) {
+      sessionAthleteId = session.athleteId;
+
+      // If the short-lived access-token cookie has expired, refresh from Supabase
+      if (!token) {
+        const { data: row } = await supabase
+          .from('athletes')
+          .select('athlete_id, firstname, lastname, profile, access_token, refresh_token, expires_at')
+          .eq('athlete_id', session.athleteId)
+          .single();
+        if (row) {
+          token = await ensureAccessToken(row as AthleteRow);
+        }
+      }
+    }
+  }
+
+  if (!token && !sessionAthleteId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   if (CLUB_ID) {
-    try {
-      const clubsRes = await fetch(
-        'https://www.strava.com/api/v3/athlete/clubs',
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        }
-      );
-      if (!clubsRes.ok) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      const clubs = (await clubsRes.json()) as Array<{ id: number }>;
-      const requiredId = Number(CLUB_ID);
-      const isMember = clubs.some(
-        (c) => c && typeof c.id === 'number' && c.id === requiredId
-      );
-      if (!isMember) {
-        return NextResponse.json(
-          { error: 'Forbidden: not in club' },
-          { status: 403 }
+    // If we have a valid access token, verify club membership via Strava API
+    if (token) {
+      try {
+        const clubsRes = await fetch(
+          'https://www.strava.com/api/v3/athlete/clubs',
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }
         );
+        if (!clubsRes.ok) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        const clubs = (await clubsRes.json()) as Array<{ id: number }>;
+        const requiredId = Number(CLUB_ID);
+        const isMember = clubs.some(
+          (c) => c && typeof c.id === 'number' && c.id === requiredId
+        );
+        if (!isMember) {
+          return NextResponse.json(
+            { error: 'Forbidden: not in club' },
+            { status: 403 }
+          );
+        }
+      } catch {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-    } catch {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+    // If we only have a session cookie (no usable token), we trust the
+    // club-membership check that was done at login time.  The athlete
+    // row only exists because they passed the check.
   }
 
   const url = new URL(req.url);

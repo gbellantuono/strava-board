@@ -159,12 +159,15 @@ export async function GET(req: NextRequest) {
     console.warn('Supabase not configured or failed to save athlete:', e);
   }
 
+  const { createSessionToken, SESSION_MAX_AGE_S } = await import('../../../../../lib/session');
+
   const redirect = NextResponse.redirect(new URL('/', req.url));
+  const isHttps = new URL(req.url).protocol === 'https:';
+
+  // Set short-lived access-token cookie (still useful for immediate API calls)
   const expires = json.expires_at
     ? new Date(json.expires_at * 1000)
     : undefined;
-  const isHttps = new URL(req.url).protocol === 'https:';
-  console.log('json message ', json);
   redirect.cookies.set('strava_access_token', json.access_token, {
     httpOnly: true,
     secure: isHttps,
@@ -172,5 +175,18 @@ export async function GET(req: NextRequest) {
     path: '/',
     expires,
   });
+
+  // Set long-lived session cookie (30 days) so users stay logged in
+  if (json.athlete?.id) {
+    const sessionToken = createSessionToken(json.athlete.id);
+    redirect.cookies.set('strava_session', sessionToken, {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: SESSION_MAX_AGE_S,
+    });
+  }
+
   return redirect;
 }

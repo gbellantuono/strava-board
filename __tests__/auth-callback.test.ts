@@ -56,6 +56,11 @@ describe('auth callback club gating', () => {
     expect(res.headers.get('location')).toBe('http://localhost/');
     // Cookie should be set
     expect(res.cookies.get('strava_access_token')?.value).toBe('token123');
+    // Long-lived session cookie should also be set
+    const sessionCookie = res.cookies.get('strava_session')?.value;
+    expect(sessionCookie).toBeDefined();
+    expect(typeof sessionCookie).toBe('string');
+    expect(sessionCookie!.split('.')).toHaveLength(3); // athleteId.timestamp.hmac
     expect(fetchCall).toBe(2);
   });
 
